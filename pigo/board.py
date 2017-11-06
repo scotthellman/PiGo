@@ -5,6 +5,7 @@ from bitarray import bitarray
 class Player(enum.IntEnum):
     BLACK = 1
     WHITE = 2
+PASS = (-1, -1)
 
 class BoardState:
     #MUTABLE!
@@ -15,6 +16,7 @@ class BoardState:
         self.player = Player.BLACK
         self.hasher = hasher
         self.hashval = hasher.initial
+        self.captures = [0,0]
 
     def __str__(self):
         char_lookup = ["-","@","O"]
@@ -24,11 +26,15 @@ class BoardState:
     def bithash(self):
         return self.hashval
 
+#    def __hash__(self):
+#        return hash(self.hashval)
+
     def copy(self):
         copied = BoardState(self.board.shape[0], self.komi, self.hasher)
         copied.board = np.copy(self.board)
         copied.hashval = bitarray(self.hashval)
         copied.player = self.player
+        copied.captures = self.captures[:]
         return copied
 
     def mutate_piece(self, x, y, new_val):
@@ -47,26 +53,45 @@ class BoardState:
         #conjectural placement
         self.mutate_piece(x, y, new_val)
 
-        #calculate liberties of this group
-
         #check neighbors
         for n in self.get_neighbors(x, y):
             if self.board[n[0], n[1]] == 0:
                 continue
             if self.board[n[0], n[1]] == self.player:
                 continue
-            group, liberties = self.find_group(*n)
+            group, liberties, _ = self.find_group(*n)
             #potentialy redundant check
             if liberties == 0:
                 for pos in group:
                     self.mutate_piece(pos[0], pos[1], 0)
+                #FIXME: this might double count?
+                self.captures[self.board[x,y] - 1] += len(group)
 
-        _, liberties = self.find_group(x,y)
+        _, liberties, __ = self.find_group(x,y)
         if liberties == 0:
             self.mutate_piece(x, y, 0)
             return
 
         pass
+
+    def calculate_score(self):
+        score = 0
+        seen = set()
+        colors = set((int(Player.BLACK), int(Player.WHITE)))
+        for i,row in enumerate(self.board):
+            for j,val in enumerate(row):
+                if val == 0:
+                    group, liberties, border =  self.find_group(i,j)
+                    seen.update(group)
+                    neighbor_colors = border & colors
+                    if len(neighbor_colors) == 1:
+                        points = len(group)
+                        if int(Player.WHITE) in neighbor_colors:
+                            points *= -1
+                        score += points
+        score += self.captures[0] - self.captures[1]
+        score -= self.komi
+        return score
 
     def get_neighbors(self, x, y):
         current = (x,y)
@@ -88,17 +113,20 @@ class BoardState:
         seen = set(group_stack)
         group = set(group_stack)
         liberties = 0
+        border_colors = set()
         while len(group_stack) > 0:
             pos = group_stack.pop()
             for n in self.get_neighbors(*pos):
                 if n not in seen:
+                    border_colors.add(self.board[n[0], n[1]])
                     if self.board[n[0], n[1]] == color:
                         seen.add(n)
                         group.add(n)
                         group_stack.append(n)
+                        continue
                     elif self.board[n[0], n[1]] == 0:
                         liberties += 1
-        return group, liberties
+        return group, liberties, border_colors
 
 
 class Zobrist:
@@ -144,7 +172,9 @@ class Board:
         # Returns the new game state.
         # Doesn't check legality
         #this logic prob belongs in state
-        state.place_piece(play[0], play[1], state.player)
+        state = state.copy()
+        if play != PASS:
+            state.place_piece(play[0], play[1], state.player)
         if state.player == Player.BLACK:
             state.player = Player.WHITE
         else:
@@ -156,7 +186,7 @@ class Board:
         # game history, and returns the full list of moves that
         # are legal plays for the current player.
         #For now, a play is just (Int, Int)
-        legal = []
+        legal = [PASS]
 
         for i in range(self.size):
             for j in range(self.size):
@@ -177,12 +207,20 @@ class Board:
                 legal.append((i,j))
         return legal
 
-    def winner(self, state_history):
+    def winner(self, current_state, state_history):
         # Takes a sequence of game states representing the full
         # game history.  If the game is now won, return the player
         # number.  If the game is still ongoing, return zero.  If
         # the game is tied, return a different distinct value, e.g. -1.
-        pass
+        if len(state_history) > 2:
+            if state_history[-1] == state_history[-2]:
+                score = current_state.calculate_score()
+                if score > 0:
+                    return int(Player.BLACK)
+                else:
+                    return int(Player.WHITE)
+        else:
+            return 0
 
 
 if __name__ == "__main__":
@@ -201,7 +239,9 @@ if __name__ == "__main__":
           (0,0),
           (3,2),
           (2,2)]
-    for move in ko:
+    small_game = ko[:-1]
+    small_game.append((2,0))
+    for move in small_game:
         legal_moves = board.legal_plays(state, history)
         print(legal_moves)
         print(move)
@@ -209,3 +249,5 @@ if __name__ == "__main__":
         state = board.next_state(state, move)
         history.append(state.bithash())
         print(state)
+    print(state.calculate_score())
+

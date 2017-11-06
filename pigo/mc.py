@@ -1,4 +1,5 @@
 import datetime
+import random
 import numpy as np
 
 class MonteCarlo(object):
@@ -28,7 +29,7 @@ class MonteCarlo(object):
         self.max_depth = 0
         state = self.states[-1]
         player = self.board.current_player(state)
-        legal = self.board.legal_plays(self.states[:])
+        legal = self.board.legal_plays(state, [s.bithash() for s in self.states])
 
         if not legal:
             return
@@ -45,9 +46,9 @@ class MonteCarlo(object):
 
         print(games,datetime.datetime.utcnow() - begin)
 
+
         percent_wins, move = max(
-                (self.wins.get((player, S), 0),
-                 self.plays.get((player, S), 1),
+                (self.wins.get((player, S), 0) / self.plays.get((player, S), 1),
                  p)
                 for p, S in moves_states
         )
@@ -79,13 +80,13 @@ class MonteCarlo(object):
 
         expand = True
 
-        for t in xrange(self.max_moves):
-            legal = self.board.legal_plays(states_copy)
+        for t in range(self.max_moves):
+            legal = self.board.legal_plays(state, [s.bithash() for s in states_copy])
             moves_states = [(p, self.board.next_state(state, p)) for p in legal]
 
             if all(plays.get((player, S)) for p, S in moves_states):
                 # If we have stats on all of the legal moves here, use them.
-                log_total = log(
+                log_total = np.log(
                     sum(plays[(player, S)] for p, S in moves_states))
                 value, move, state = max(
                     ((wins[(player, S)] / plays[(player, S)]) +
@@ -94,7 +95,7 @@ class MonteCarlo(object):
                 )
             else:
                 # Otherwise, just make an arbitrary decision.
-                move, state = choice(moves_states)
+                move, state = random.choice(moves_states)
 
             states_copy.append(state)
 
@@ -108,7 +109,7 @@ class MonteCarlo(object):
             visited_states.add((player, state))
 
             player = self.board.current_player(state)
-            winner = self.board.winner(states_copy)
+            winner = self.board.winner(state, [s.bithash() for s in states_copy])
             if winner:
                 break
 
