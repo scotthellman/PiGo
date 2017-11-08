@@ -12,7 +12,7 @@ class MonteCarlo(object):
 
         seconds = kwargs.get('time', 30)
         self.calculation_time = datetime.timedelta(seconds=seconds)
-        self.max_moves = kwargs.get('max_moved', 100)
+        self.max_moves = kwargs.get('max_moves', 100)
         self.wins = {}
         self.plays = {}
 
@@ -64,6 +64,7 @@ class MonteCarlo(object):
             print("{3}: {0:.2f}% ({1} / {2})".format(*x))
 
         print("Maximum depth searched:", self.max_depth)
+        print(move)
 
         return move
 
@@ -83,8 +84,9 @@ class MonteCarlo(object):
         for t in range(self.max_moves):
             legal = self.board.legal_plays(state, [s.bithash() for s in states_copy])
             moves_states = [(p, self.board.next_state(state, p)) for p in legal]
-
-            if all(plays.get((player, S)) for p, S in moves_states):
+            unseen = [m for m in moves_states if (player, m[0]) not in plays]
+            #if all(plays.get((player, S)) for p, S in moves_states):
+            if len(unseen) == 0:
                 # If we have stats on all of the legal moves here, use them.
                 log_total = np.log(
                     sum(plays[(player, S)] for p, S in moves_states))
@@ -94,8 +96,9 @@ class MonteCarlo(object):
                     for p, S in moves_states
                 )
             else:
-                # Otherwise, just make an arbitrary decision.
-                move, state = random.choice(moves_states)
+                # Otherwise, just make an arbitrary decision from paths we have not tried
+                #TODO: this is probably wrong
+                move, state = random.choice(unseen)
 
             states_copy.append(state)
 
@@ -112,11 +115,13 @@ class MonteCarlo(object):
             winner = self.board.winner(state, [s.bithash() for s in states_copy])
             if winner:
                 break
+        else:
+            winner = self.board.projected_winner(state)
 
         for player, state in visited_states:
             if (player, state) not in plays:
                 continue
             plays[(player, state)] += 1
-            if player == winner:
+            if int(player) == winner:
                 wins[(player, state)] += 1
 

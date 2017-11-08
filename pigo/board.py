@@ -1,5 +1,6 @@
 import numpy as np
 import enum
+import struct
 from bitarray import bitarray
 
 class Player(enum.IntEnum):
@@ -23,6 +24,18 @@ class BoardState:
         result = "\n".join(["".join([char_lookup[r] for r in row]) for row in self.board])
         return result
 
+    def __hash__(self):
+        return self.hashval
+
+    def __eq__(self, other):
+        #quick check first
+        if self.hashval != other.hashval:
+            return False
+        return (np.all(self.board == other.board) &
+                (self.komi == other.komi) &
+                (self.player == other.player) &
+                (self.captures == other.captures))
+
     def bithash(self):
         return self.hashval
 
@@ -32,7 +45,8 @@ class BoardState:
     def copy(self):
         copied = BoardState(self.board.shape[0], self.komi, self.hasher)
         copied.board = np.copy(self.board)
-        copied.hashval = bitarray(self.hashval)
+        #NOTE: This really assumes we're dealing with a primitive
+        copied.hashval = self.hashval
         copied.player = self.player
         copied.captures = self.captures[:]
         return copied
@@ -134,19 +148,22 @@ class Zobrist:
     def __init__(self, size, length=64):
         #TODO: set seed then we can not worry about multiple copies
         #TODO: and/or make it a singleton
+        #TODO: now we're using ints and its' all a mess
         self.size = size
         self.length = length
         positions = []
         for i in range(size*size):
             elements = []
             for element in Player:
-                elements.append(bitarray(list(np.random.randint(2, size=length))))
+                h = list(np.random.randint(2, size=length))
+                val = "0b" + "".join((str(v) for v in h))
+                elements.append(int(val,2))
             positions.append(elements)
         self.bitstrings = positions
 
     @property
     def initial(self):
-        return bitarray([0]*self.length)
+        return 0
 
     def update_hash(self, hashval, i, j, val):
         return hashval ^ self.bitstrings[i + self.size * j][val - 1]
@@ -207,6 +224,14 @@ class Board:
                 legal.append((i,j))
         return legal
 
+    def projected_winner(self, current_state):
+        score = current_state.calculate_score()
+        if score > 0:
+            return int(Player.BLACK)
+        else:
+            return int(Player.WHITE)
+
+
     def winner(self, current_state, state_history):
         # Takes a sequence of game states representing the full
         # game history.  If the game is now won, return the player
@@ -219,8 +244,7 @@ class Board:
                     return int(Player.BLACK)
                 else:
                     return int(Player.WHITE)
-        else:
-            return 0
+        return 0
 
 
 if __name__ == "__main__":
