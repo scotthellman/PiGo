@@ -13,6 +13,8 @@ class BoardState:
 
     def __init__(self, size, komi, hasher):
         self.board = np.zeros((size,size), dtype=np.int8)
+        self.groups = np.arange(size*size).reshape(size, size)
+        self.liberties = {}
         self.komi = komi
         self.player = Player.BLACK
         self.hasher = hasher
@@ -45,6 +47,8 @@ class BoardState:
     def copy(self):
         copied = BoardState(self.board.shape[0], self.komi, self.hasher)
         copied.board = np.copy(self.board)
+        copied.groups = np.copy(self.groups)
+        copied.liberties = {k:set(v) for k,v in self.liberties.items()}
         #NOTE: This really assumes we're dealing with a primitive
         copied.hashval = self.hashval
         copied.player = self.player
@@ -60,33 +64,68 @@ class BoardState:
         if new_val != 0:
             self.hashval = self.hasher.update_hash(self.hashval, x, y, new_val)
 
+    def unify_groups(self, x, y):
+        group, liberties, __ = self.find_group(x, y)
+        #TODO: this could be faster
+        labels = set(self.groups[g] for g in group)
+        new_label = np.min([self.groups[g] for g in group])
+        for l in labels:
+            #del or just zero out?
+            if l in self.liberties:
+                del self.liberties[l]
+        self.liberties[new_label] = liberties
+        for g in group:
+            self.groups[g] = new_label
+
     def place_piece(self, x, y, new_val):
         #assumes legal, ignoring ko 
         #suicide will not change board
 
-        #conjectural placement
-        self.mutate_piece(x, y, new_val)
-
         #check neighbors
+        suicide = None
+        captures = set()
+        captured_groups = set()
         for n in self.get_neighbors(x, y):
             if self.board[n[0], n[1]] == 0:
                 continue
             if self.board[n[0], n[1]] == self.player:
+                liberties = self.liberties[self.groups[n]]
+                if suicide is None and len(liberties) == 1 and list(liberties)[0] == n:
+                    suicide = True
+                else:
+                    suicide = False
                 continue
-            group, liberties, _ = self.find_group(*n)
-            #potentialy redundant check
-            if liberties == 0:
-                for pos in group:
-                    self.mutate_piece(pos[0], pos[1], 0)
-                #FIXME: this might double count?
-                self.captures[self.board[x,y] - 1] += len(group)
+            group = self.groups[n]
+            if len(self.liberties[group]) == 1:
+                captured_groups.add(group)
+                #TODO: this prob should be broken out
+                xs,ys = np.where(self.groups == group)
+                for pos in zip(xs,ys):
+                    captures.add(pos)
+                del self.liberties[group]
 
-        _, liberties, __ = self.find_group(x,y)
-        if liberties == 0:
-            self.mutate_piece(x, y, 0)
+        #print("A",self.board)
+        if len(captures) == 0 and suicide is not None and not suicide:
             return
 
-        pass
+        self.captures[self.board[x,y] - 1] += len(captures)
+
+        for captured in captures:
+            self.board[captured] = 0
+        #self.board[list(captures)] = 0
+        #print("B",self.board)
+        #TODO: This is wrong!
+        for group in captured_groups:
+            self.groups[np.where(self.groups == group)] = 0
+
+        self.mutate_piece(x, y, new_val)
+        self.unify_groups(x, y)
+
+        #TODO: find a more elegant place for this
+        for n in self.get_neighbors(x, y):
+            if n not in captures:
+                if self.board[n] !=0 and self.board[n] != self.player:
+                    self.liberties[self.groups[n]].discard((x,y))
 
     def calculate_score(self):
         score = 0
@@ -126,20 +165,20 @@ class BoardState:
         color = self.board[x,y]
         seen = set(group_stack)
         group = set(group_stack)
-        liberties = 0
+        liberties = set()
         border_colors = set()
         while len(group_stack) > 0:
             pos = group_stack.pop()
             for n in self.get_neighbors(*pos):
                 if n not in seen:
                     border_colors.add(self.board[n[0], n[1]])
-                    if self.board[n[0], n[1]] == color:
+                    if self.board[n] == color:
                         seen.add(n)
                         group.add(n)
                         group_stack.append(n)
                         continue
-                    elif self.board[n[0], n[1]] == 0:
-                        liberties += 1
+                    elif self.board[n] == 0:
+                        liberties.add(n)
         return group, liberties, border_colors
 
 
@@ -264,8 +303,9 @@ if __name__ == "__main__":
           (3,2),
           (2,2)]
     small_game = ko[:-1]
-    small_game.append((2,0))
+    #small_game.append((2,0))
     for move in small_game:
+        print("liberties", state.liberties)
         legal_moves = board.legal_plays(state, history)
         print(legal_moves)
         print(move)
@@ -273,5 +313,6 @@ if __name__ == "__main__":
         state = board.next_state(state, move)
         history.append(state.bithash())
         print(state)
+        print(state.groups)
     print(state.calculate_score())
 
