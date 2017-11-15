@@ -13,13 +13,14 @@ class BoardState:
 
     def __init__(self, size, komi, hasher):
         self.board = np.zeros((size,size), dtype=np.int8)
-        self.groups = np.arange(size*size).reshape(size, size)
+        self.groups = np.ones((size,size)) * -1
         self.liberties = {}
         self.komi = komi
         self.player = Player.BLACK
         self.hasher = hasher
         self.hashval = hasher.initial
         self.captures = [0,0]
+        self.turns = 0
 
     def __str__(self):
         char_lookup = ["-","@","O"]
@@ -53,6 +54,7 @@ class BoardState:
         copied.hashval = self.hashval
         copied.player = self.player
         copied.captures = self.captures[:]
+        copied.turns = self.turns
         return copied
 
     def mutate_piece(self, x, y, new_val):
@@ -77,15 +79,16 @@ class BoardState:
         for g in group:
             self.groups[g] = new_label
 
-    def place_piece(self, x, y, new_val):
-        #assumes legal, ignoring ko 
-        #suicide will not change board
-
-        #check neighbors
+    def placement_effects(self, x, y, new_val):
         suicide = None
         captures = set()
         captured_groups = set()
+
+        #special case for when a lone suicidal stone is placed
+        num_opposing = 0
+        num_neighbors = 0
         for n in self.get_neighbors(x, y):
+            num_neighbors += 1
             if self.board[n[0], n[1]] == 0:
                 continue
             if self.board[n[0], n[1]] == self.player:
@@ -95,6 +98,7 @@ class BoardState:
                 else:
                     suicide = False
                 continue
+            num_opposing += 1
             group = self.groups[n]
             if len(self.liberties[group]) == 1:
                 captured_groups.add(group)
@@ -102,24 +106,47 @@ class BoardState:
                 xs,ys = np.where(self.groups == group)
                 for pos in zip(xs,ys):
                     captures.add(pos)
-                del self.liberties[group]
 
         #print("A",self.board)
-        if len(captures) == 0 and suicide is not None and not suicide:
+        if num_opposing == num_neighbors:
+            suicide = True
+
+        if len(captures) == 0 and suicide is not None and suicide:
+            suicide = True
+        else:
+            suicide = False
+
+        return suicide, captures, captured_groups
+
+    def place_piece(self, x, y, new_val):
+        #assumes legal, ignoring ko 
+        #suicide will not change board
+
+        suicide, captures, captured_groups = self.placement_effects(x, y, new_val)
+
+        #check neighbors
+        if suicide:
             return
 
         self.captures[self.board[x,y] - 1] += len(captures)
 
         for captured in captures:
             self.board[captured] = 0
+            #return liberties
+            for n in self.get_neighbors(*captured):
+                if self.board[n] == new_val:
+                    self.liberties[self.groups[n]].add(n)
         #self.board[list(captures)] = 0
         #print("B",self.board)
         #TODO: This is wrong!
         for group in captured_groups:
-            self.groups[np.where(self.groups == group)] = 0
+            self.groups[np.where(self.groups == group)] = -1
+            del self.liberties[group]
 
         self.mutate_piece(x, y, new_val)
+        self.groups[x,y] = self.turns
         self.unify_groups(x, y)
+        self.turns += 1
 
         #TODO: find a more elegant place for this
         for n in self.get_neighbors(x, y):
@@ -249,15 +276,25 @@ class Board:
                 if state.board[i,j] != 0:
                     continue
                 #tentatively place piece for next checks
-                projected_state = state.copy()
-                projected_state.place_piece(i, j, projected_state.player)
+
+                #projected_state = state.copy()
+                suicide, captures, _ = state.placement_effects(i, j, state.player)
+                #projected_state.place_piece(i, j, projected_state.player)
 
                 #check for suicide
-                if projected_state.board[i,j] == 0:
+                if suicide:
                     continue
 
                 #check for ko
-                if projected_state.bithash() in history:
+                if len(captures) == 0:
+                    state.mutate_piece(i, j, state.player)
+                    ko = state.bithash() in history
+                    state.mutate_piece(i, j, 0)
+                else:
+                    projected_state = state.copy()
+                    projected_state.place_piece(i, j, projected_state.player)
+                    ko = projected_state.bithash() in history
+                if ko:
                     continue
 
                 legal.append((i,j))
@@ -304,8 +341,12 @@ if __name__ == "__main__":
           (2,2)]
     small_game = ko[:-1]
     #small_game.append((2,0))
-    for move in small_game:
-        print("liberties", state.liberties)
+    corner = [(0,1),
+              (2,2),
+              (1,0),
+              (0,0)]
+    for move in corner:
+        print("-"*20)
         legal_moves = board.legal_plays(state, history)
         print(legal_moves)
         print(move)
