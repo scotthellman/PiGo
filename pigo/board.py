@@ -131,7 +131,7 @@ class BoardState:
         self.captures[self.board[x,y] - 1] += len(captures)
 
         for captured in captures:
-            self.board[captured] = 0
+            self.mutate_piece(captured[0], captured[1], 0)
             #return liberties
             for n in self.get_neighbors(*captured):
                 if self.board[n] == new_val:
@@ -284,7 +284,6 @@ class Board:
                 #check for suicide
                 if suicide:
                     continue
-
                 #check for ko
                 if len(captures) == 0:
                     state.mutate_piece(i, j, state.player)
@@ -313,8 +312,8 @@ class Board:
         # game history.  If the game is now won, return the player
         # number.  If the game is still ongoing, return zero.  If
         # the game is tied, return a different distinct value, e.g. -1.
-        if len(state_history) > 2:
-            if state_history[-1] == state_history[-2]:
+        if len(state_history) > 3:
+            if state_history[-1] == state_history[-2] == state_history[-3]:
                 score = current_state.calculate_score()
                 if score > 0:
                     return int(Player.BLACK)
@@ -339,13 +338,13 @@ if __name__ == "__main__":
           (0,0),
           (3,2),
           (2,2)]
-    small_game = ko[:-1]
+    #small_game = ko[:-1]
     #small_game.append((2,0))
     corner = [(0,1),
               (2,2),
               (1,0),
               (0,0)]
-    for move in corner:
+    for move in ko:
         print("-"*20)
         legal_moves = board.legal_plays(state, history)
         print(legal_moves)
@@ -353,6 +352,7 @@ if __name__ == "__main__":
         assert move in legal_moves
         state = board.next_state(state, move)
         history.append(state.bithash())
+        print(history[-3:])
         print(state)
         print(state.groups)
     print(state.calculate_score())
